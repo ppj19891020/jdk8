@@ -882,24 +882,24 @@ public abstract class AbstractQueuedSynchronizer
      */
     private void doAcquireInterruptibly(int arg)
         throws InterruptedException {
-        final Node node = addWaiter(Node.EXCLUSIVE);
+        final Node node = addWaiter(Node.EXCLUSIVE);    // 1. 将当前的线程封装成 Node 加入到 Sync Queue 里面
         boolean failed = true;
         try {
             for (;;) {
-                final Node p = node.predecessor();
-                if (p == head && tryAcquire(arg)) {
+                final Node p = node.predecessor();      // 2. 获取当前节点的前继节点 (当一个n在 Sync Queue 里面, 并且没有获取 lock 的 node 的前继节点不可能是 null)
+                if (p == head && tryAcquire(arg)) {     // 3. 判断前继节点是否是head节点(前继节点是head, 存在两种情况 (1) 前继节点现在占用 lock (2)前继节点是个空节点, 已经释放 lock, node 现在有机会获取 lock); 则再次调用 tryAcquire尝试获取一下
                     setHead(node);
                     p.next = null; // help GC
                     failed = false;
                     return;
                 }
-                if (shouldParkAfterFailedAcquire(p, node) &&
-                    parkAndCheckInterrupt())
-                    throw new InterruptedException();
+                if (shouldParkAfterFailedAcquire(p, node) &&  // 4. 调用 shouldParkAfterFailedAcquire 判断是否需要中断(这里可能会一开始 返回 false, 但在此进去后直接返回 true(主要和前继节点的状态是否是 signal))
+                    parkAndCheckInterrupt())                    // 5. 现在lock还是被其他线程占用 那就睡一会, 返回值判断是否这次线程的唤醒是被中断唤醒
+                    throw new InterruptedException();           // 6. 线程此时唤醒是通过线程中断, 则直接抛异常
             }
         } finally {
-            if (failed)
-                cancelAcquire(node);
+            if (failed)                                         // 7. 在整个获取中出错(比如线程中断)
+                cancelAcquire(node);                            // 8. 清除 node 节点(清除的过程是先给 node 打上 CANCELLED标志, 然后再删除)
         }
     }
 
@@ -1214,11 +1214,16 @@ public abstract class AbstractQueuedSynchronizer
      *        can represent anything you like.
      * @throws InterruptedException if the current thread is interrupted
      */
+    /**
+     * 支持中断的获取 lock ,若被中断 则直接 放弃(aborting)
+     * @param arg
+     * @throws InterruptedException
+     */
     public final void acquireInterruptibly(int arg)
             throws InterruptedException {
-        if (Thread.interrupted())
-            throw new InterruptedException();
-        if (!tryAcquire(arg))
+        if (Thread.interrupted())               // 1. 判断线程是否被终止
+            throw new InterruptedException();   // 2. 尝试性的获取锁
+        if (!tryAcquire(arg))                   // 3. 获取锁不成功, 直接加入到 Sync Queue 里面(这里的加入操作在doAcquireInterruptibly里面)
             doAcquireInterruptibly(arg);
     }
 
