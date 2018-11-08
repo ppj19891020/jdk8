@@ -1835,8 +1835,10 @@ public abstract class AbstractQueuedSynchronizer
     public class ConditionObject implements Condition, java.io.Serializable {
         private static final long serialVersionUID = 1173984872572414699L;
         /** First node of condition queue. */
+        /** Condition Queue 里面的头节点 */
         private transient Node firstWaiter;
         /** Last node of condition queue. */
+        /** Condition Queue 里面的尾节点 */
         private transient Node lastWaiter;
 
         /**
@@ -1847,22 +1849,26 @@ public abstract class AbstractQueuedSynchronizer
         // Internal methods
 
         /**
-         * Adds a new waiter to wait queue.
-         * @return its new wait node
+         * Adds a new waiter to wait queue
+         * 将当前线程封装成一个 Node 节点 放入大 Condition Queue 里面
+         * 大家可以注意到, 下面对 Condition Queue 的操作都没考虑到 并发(Sync Queue 的队列是支持并发操作的), 这是为什么呢? 因为在进行操作 Condition 是当前的线程已经获取了AQS的独占锁, 所以不需要考虑并发的情况
+         * @return
          */
         private Node addConditionWaiter() {
-            Node t = lastWaiter;
-            // If lastWaiter is cancelled, clean out.
+            Node t = lastWaiter;                                // 1. Condition queue 的尾节点
+            // If lastWaiter is cancelled, clean out.           // 2.尾节点已经Cancel, 直接进行清除,
+                                                                //    这里有1个问题, 1 何时出现t.waitStatus != Node.CONDITION -> 在对线程进行中断时 ConditionObject -> await -> checkInterruptWhileWaiting -> transferAfterCancelledWait "compareAndSetWaitStatus(node, Node.CONDITION, 0)" <- 导致这种情况一般是 线程中断或 await 超时
+                                                                //    一个注意点: 当Condition进行 awiat 超时或被中断时, Condition里面的节点是没有被删除掉的, 需要其他 await 在将线程加入 Condition Queue 时调用addConditionWaiter而进而删除, 或 await 操作差不多结束时, 调用 "node.nextWaiter != null" 进行判断而删除 (PS: 通过 signal 进行唤醒时 node.nextWaiter 会被置空, 而中断和超时时不会)
             if (t != null && t.waitStatus != Node.CONDITION) {
-                unlinkCancelledWaiters();
-                t = lastWaiter;
+                unlinkCancelledWaiters();                       // 3. 调用 unlinkCancelledWaiters 对 "waitStatus != Node.CONDITION" 的节点进行删除(在Condition里面的Node的waitStatus 要么是CONDITION(正常), 要么就是 0 (signal/timeout/interrupt))
+                t = lastWaiter;                                 // 4. 获取最新的 lastWaiter
             }
-            Node node = new Node(Thread.currentThread(), Node.CONDITION);
+            Node node = new Node(Thread.currentThread(), Node.CONDITION);// 5. 将线程封装成 node 准备放入 Condition Queue 里面
             if (t == null)
-                firstWaiter = node;
+                firstWaiter = node;                             // 6 .Condition Queue 是空的
             else
-                t.nextWaiter = node;
-            lastWaiter = node;
+                t.nextWaiter = node;                            // 7. 最加到 queue 尾部
+            lastWaiter = node;                                  // 8. 重新赋值 lastWaiter
             return node;
         }
 
@@ -1872,26 +1878,32 @@ public abstract class AbstractQueuedSynchronizer
          * to inline the case of no waiters.
          * @param first (non-null) the first node on condition queue
          */
+        /**
+         * 唤醒 Condition Queue 里面的头节点, 注意这里的唤醒只是将 Node 从 Condition Queue 转到 Sync Queue 里面(这时的 Node 也还是能被 Interrupt)
+         */
         private void doSignal(Node first) {
             do {
-                if ( (firstWaiter = first.nextWaiter) == null)
-                    lastWaiter = null;
+                if ( (firstWaiter = first.nextWaiter) == null)  // 1. 将 first.nextWaiter 赋值给 nextWaiter 为下次做准备
+                    lastWaiter = null;                          // 2. 这时若 nextWaiter == null, 则说明 Condition 为空了, 所以直接置空 lastWaiter
                 first.nextWaiter = null;
-            } while (!transferForSignal(first) &&
-                     (first = firstWaiter) != null);
+            } while (!transferForSignal(first) &&               // 3.  first.nextWaiter == null 是判断 Node 从 Condition queue 转移到 Sync Queue 里面是通过 signal 还是 timeout/interrupt
+                     (first = firstWaiter) != null);            // 4. 调用  transferForSignal将 first 转移到 Sync Queue 里面, 返回不成功的话, 将 firstWaiter 赋值给 first
         }
 
         /**
          * Removes and transfers all nodes.
          * @param first (non-null) the first node on condition queue
          */
+        /**
+         * 唤醒 Condition Queue 里面的所有的节点
+         */
         private void doSignalAll(Node first) {
-            lastWaiter = firstWaiter = null;
+            lastWaiter = firstWaiter = null;        // 1. 将 lastWaiter, firstWaiter 置空
             do {
-                Node next = first.nextWaiter;
-                first.nextWaiter = null;
-                transferForSignal(first);
-                first = next;
+                Node next = first.nextWaiter;       // 2. 初始化下个换新的节点
+                first.nextWaiter = null;            // 3.  first.nextWaiter == null 是判断 Node 从 Condition queue 转移到 Sync Queue 里面是通过 signal 还是 timeout/interrupt
+                transferForSignal(first);           // 4. 调用  transferForSignal将 first 转移到 Sync Queue 里面
+                first = next;                       // 5. 开始换新 next 节点
             } while (first != null);
         }
 
@@ -1909,22 +1921,26 @@ public abstract class AbstractQueuedSynchronizer
          * without requiring many re-traversals during cancellation
          * storms.
          */
+        /**
+         * 在 调用 addConditionWaiter 将线程放入 Condition Queue 里面时 或 awiat 方法获取 差不多结束时 进行清理 Condition queue 里面的因 timeout/interrupt 而还存在的节点
+         * 这个删除操作比较巧妙, 其中引入了 trail 节点， 可以理解为traverse整个 Condition Queue 时遇到的最后一个有效的节点
+         */
         private void unlinkCancelledWaiters() {
             Node t = firstWaiter;
             Node trail = null;
             while (t != null) {
-                Node next = t.nextWaiter;
-                if (t.waitStatus != Node.CONDITION) {
-                    t.nextWaiter = null;
-                    if (trail == null)
-                        firstWaiter = next;
+                Node next = t.nextWaiter;               // 1. 先初始化 next 节点
+                if (t.waitStatus != Node.CONDITION) {   // 2. 节点不有效, 在Condition Queue 里面 Node.waitStatus 只有可能是 CONDITION 或是 0(timeout/interrupt引起的)
+                    t.nextWaiter = null;                // 3. Node.nextWaiter 置空
+                    if (trail == null)                  // 4. 一次都没有遇到有效的节点
+                        firstWaiter = next;             // 5. 将 next 赋值给 firstWaiter(此时 next 可能也是无效的, 这只是一个临时处理)
                     else
-                        trail.nextWaiter = next;
+                        trail.nextWaiter = next;        // 6. next 赋值给 trail.nextWaiter, 这一步其实就是删除节点 t
                     if (next == null)
-                        lastWaiter = trail;
+                        lastWaiter = trail;             // 7. next == null 说明 已经 traverse 完了 Condition Queue
                 }
                 else
-                    trail = t;
+                    trail = t;                          // 8. 将有效节点赋值给 trail
                 t = next;
             }
         }
@@ -1939,12 +1955,16 @@ public abstract class AbstractQueuedSynchronizer
          * @throws IllegalMonitorStateException if {@link #isHeldExclusively}
          *         returns {@code false}
          */
+        /**
+         * 将 Condition queue 的头节点转移到 Sync Queue 里面
+         * 在进行调用 signal 时, 当前的线程必须获取了 独占的锁
+         */
         public final void signal() {
-            if (!isHeldExclusively())
+            if (!isHeldExclusively())                       // 1. 判断当前的线程是否已经获取 独占锁
                 throw new IllegalMonitorStateException();
             Node first = firstWaiter;
             if (first != null)
-                doSignal(first);
+                doSignal(first);                            // 2. 调用 doSignal 进行转移
         }
 
         /**
@@ -1953,6 +1973,9 @@ public abstract class AbstractQueuedSynchronizer
          *
          * @throws IllegalMonitorStateException if {@link #isHeldExclusively}
          *         returns {@code false}
+         */
+        /**
+         * 将 Condition Queue 里面的节点都转移到 Sync Queue 里面
          */
         public final void signalAll() {
             if (!isHeldExclusively())
@@ -1973,17 +1996,20 @@ public abstract class AbstractQueuedSynchronizer
          *      {@link #acquire} with saved state as argument.
          * </ol>
          */
+        /**
+         * 不响应线程中断的方式进行 await
+         */
         public final void awaitUninterruptibly() {
-            Node node = addConditionWaiter();
-            int savedState = fullyRelease(node);
-            boolean interrupted = false;
-            while (!isOnSyncQueue(node)) {
-                LockSupport.park(this);
-                if (Thread.interrupted())
-                    interrupted = true;
+            Node node = addConditionWaiter();       // 1. 将当前线程封装成一个 Node 放入 Condition Queue 里面
+            int savedState = fullyRelease(node);    // 2. 释放当前线程所获取的所有的独占锁(PS: 独占的锁支持重入), 等等, 为什么要释放呢? 以为你调用 awaitUninterruptibly 方法的前提就是你已经获取了 独占锁
+            boolean interrupted = false;            // 3. 线程中断标识
+            while (!isOnSyncQueue(node)) {          // 4. 这里是一个 while loop, 调用 isOnSyncQueue 判断当前的 Node 是否已经被转移到 Sync Queue 里面
+                LockSupport.park(this);     // 5. 若当前 node 不在 sync queue 里面, 则先 block 一下等待其他线程调用 signal 进行唤醒; (这里若有其他线程对当前线程进行 中断的换, 也能进行唤醒)
+                if (Thread.interrupted())          // 6. 判断这是唤醒是 signal 还是 interrupted(Thread.interrupted()会清楚线程的中断标记, 但没事, 我们有步骤7中的interrupted进行记录)
+                    interrupted = true;             // 7. 说明这次唤醒是被中断而唤醒的,这个标记若是true的话, 在 awiat 离开时还要 自己中断一下(selfInterrupt), 其他的函数可能需要线程的中断标识
             }
-            if (acquireQueued(node, savedState) || interrupted)
-                selfInterrupt();
+            if (acquireQueued(node, savedState) || interrupted) // 8. acquireQueued 返回 true 说明线程在 block 的过程中式被 inetrrupt 过(其实 acquireQueued 返回 true 也有可能其中有一次唤醒是 通过 signal)
+                selfInterrupt();                                // 9. 自我中断, 外面的线程可以通过这个标识知道, 整个 awaitUninterruptibly 运行过程中 是否被中断过
         }
 
         /*
@@ -2034,23 +2060,27 @@ public abstract class AbstractQueuedSynchronizer
          * <li> If interrupted while blocked in step 4, throw InterruptedException.
          * </ol>
          */
+        /**
+         * 支持 InterruptedException 的 await <- 注意这里即使是线程被中断,
+         * 还是需要获取了独占的锁后, 再 调用 lock.unlock 进行释放锁
+         */
         public final void await() throws InterruptedException {
-            if (Thread.interrupted())
+            if (Thread.interrupted())                                   // 1. 判断线程是否中断
                 throw new InterruptedException();
-            Node node = addConditionWaiter();
-            int savedState = fullyRelease(node);
+            Node node = addConditionWaiter();                           // 2. 将线程封装成一个 Node 放到 Condition Queue 里面, 其中可能有些清理工作
+            int savedState = fullyRelease(node);                        // 3. 释放当前线程所获取的所有的锁 (PS: 调用 await 方法时, 当前线程是必须已经获取了独占的锁)
             int interruptMode = 0;
-            while (!isOnSyncQueue(node)) {
-                LockSupport.park(this);
-                if ((interruptMode = checkInterruptWhileWaiting(node)) != 0)
+            while (!isOnSyncQueue(node)) {                              // 4. 判断当前线程是否在 Sync Queue 里面(这里 Node 从 Condtion Queue 里面转移到 Sync Queue 里面有两种可能 (1) 其他线程调用 signal 进行转移 (2) 当前线程被中断而进行Node的转移(就在checkInterruptWhileWaiting里面进行转移))
+                LockSupport.park(this);                         // 5. 当前线程没在 Sync Queue 里面, 则进行 block
+                if ((interruptMode = checkInterruptWhileWaiting(node)) != 0)// 6. 判断此次线程的唤醒是否因为线程被中断, 若是被中断, 则会在checkInterruptWhileWaiting的transferAfterCancelledWait 进行节点的转移; 返回值 interruptMode != 0
                     break;
             }
-            if (acquireQueued(node, savedState) && interruptMode != THROW_IE)
+            if (acquireQueued(node, savedState) && interruptMode != THROW_IE)// 7. 调用 acquireQueued在 Sync Queue 里面进行 独占锁的获取, 返回值表明在获取的过程中有没有被中断过
                 interruptMode = REINTERRUPT;
-            if (node.nextWaiter != null) // clean up if cancelled
-                unlinkCancelledWaiters();
-            if (interruptMode != 0)
-                reportInterruptAfterWait(interruptMode);
+            if (node.nextWaiter != null) // clean up if cancelled           // 8. 通过 "node.nextWaiter != null" 判断 线程的唤醒是中断还是 signal, 因为通过中断唤醒的话, 此刻代表线程的 Node 在 Condition Queue 与 Sync Queue 里面都会存在
+                unlinkCancelledWaiters();                                    // 9. 进行 cancelled 节点的清除
+            if (interruptMode != 0)                                         // 10. "interruptMode != 0" 代表通过中断的方式唤醒线程
+                reportInterruptAfterWait(interruptMode);                    // 11. 根据 interruptMode 的类型决定是抛出异常, 还是自己再中断一下
         }
 
         /**
@@ -2066,32 +2096,40 @@ public abstract class AbstractQueuedSynchronizer
          * <li> If interrupted while blocked in step 4, throw InterruptedException.
          * </ol>
          */
+        /**
+         * 所有 awaitXX 方法其实就是
+         *  0. 将当前的线程封装成 Node 加入到 Condition 里面
+         *  1. 丢到当前线程所拥有的 独占锁,
+         *  2. 等待 其他获取 独占锁的线程的唤醒, 唤醒从 Condition Queue 到 Sync Queue 里面, 进而获取 独占锁
+         *  3. 最后获取 lock 之后, 在根据线程唤醒的方式(signal/interrupt) 进行处理
+         *  4. 最后还是需要调用 lock./unlock 进行释放锁
+         */
         public final long awaitNanos(long nanosTimeout)
                 throws InterruptedException {
-            if (Thread.interrupted())
+            if (Thread.interrupted())                               // 1. 判断线程是否中断
                 throw new InterruptedException();
-            Node node = addConditionWaiter();
-            int savedState = fullyRelease(node);
-            final long deadline = System.nanoTime() + nanosTimeout;
+            Node node = addConditionWaiter();                       // 2. 将线程封装成一个 Node 放到 Condition Queue 里面, 其中可能有些清理工作
+            int savedState = fullyRelease(node);                    // 3. 释放当前线程所获取的所有的锁 (PS: 调用 await 方法时, 当前线程是必须已经获取了独占的锁)
+            final long deadline = System.nanoTime() + nanosTimeout; // 4. 计算 wait 的截止时间
             int interruptMode = 0;
-            while (!isOnSyncQueue(node)) {
-                if (nanosTimeout <= 0L) {
-                    transferAfterCancelledWait(node);
+            while (!isOnSyncQueue(node)) {                          // 5. 判断当前线程是否在 Sync Queue 里面(这里 Node 从 Condtion Queue 里面转移到 Sync Queue 里面有两种可能 (1) 其他线程调用 signal 进行转移 (2) 当前线程被中断而进行Node的转移(就在checkInterruptWhileWaiting里面进行转移))
+                if (nanosTimeout <= 0L) {                           // 6. 等待时间超时(这里的 nanosTimeout 是有可能 < 0),
+                    transferAfterCancelledWait(node);               //  7. 调用 transferAfterCancelledWait 将 Node 从 Condition 转移到 Sync Queue 里面
                     break;
                 }
-                if (nanosTimeout >= spinForTimeoutThreshold)
-                    LockSupport.parkNanos(this, nanosTimeout);
-                if ((interruptMode = checkInterruptWhileWaiting(node)) != 0)
-                    break;
-                nanosTimeout = deadline - System.nanoTime();
+                if (nanosTimeout >= spinForTimeoutThreshold)        // 8. 当剩余时间 < spinForTimeoutThreshold, 其实函数 spin 比用 LockSupport.parkNanos 更高效
+                    LockSupport.parkNanos(this, nanosTimeout);// 9. 进行线程的 block
+                if ((interruptMode = checkInterruptWhileWaiting(node)) != 0)// 10. 判断此次线程的唤醒是否因为线程被中断, 若是被中断, 则会在checkInterruptWhileWaiting的transferAfterCancelledWait 进行节点的转移; 返回值 interruptMode != 0
+                    break;                                                     // 说明此是通过线程中断的方式进行唤醒, 并且已经进行了 node 的转移, 转移到 Sync Queue 里面
+                nanosTimeout = deadline - System.nanoTime();            // 11. 计算剩余时间
             }
-            if (acquireQueued(node, savedState) && interruptMode != THROW_IE)
+            if (acquireQueued(node, savedState) && interruptMode != THROW_IE)// 12. 调用 acquireQueued在 Sync Queue 里面进行 独占锁的获取, 返回值表明在获取的过程中有没有被中断过
                 interruptMode = REINTERRUPT;
-            if (node.nextWaiter != null)
-                unlinkCancelledWaiters();
-            if (interruptMode != 0)
-                reportInterruptAfterWait(interruptMode);
-            return deadline - System.nanoTime();
+            if (node.nextWaiter != null)                                    // 13. 通过 "node.nextWaiter != null" 判断 线程的唤醒是中断还是 signal, 因为通过中断唤醒的话, 此刻代表线程的 Node 在 Condition Queue 与 Sync Queue 里面都会存在
+                unlinkCancelledWaiters();                                   // 14. 进行 cancelled 节点的清除
+            if (interruptMode != 0)                                         // 15. "interruptMode != 0" 代表通过中断的方式唤醒线程
+                reportInterruptAfterWait(interruptMode);                    // 16. 根据 interruptMode 的类型决定是抛出异常, 还是自己再中断一下
+            return deadline - System.nanoTime();                            // 17 这个返回值代表是 通过 signal 还是 超时
         }
 
         /**
