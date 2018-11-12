@@ -158,34 +158,57 @@ public class CountDownLatch {
      * Synchronization control For CountDownLatch.
      * Uses AQS state to represent count.
      */
+    /**
+     * CountDownLatch 的同步控制器，继承自 AQS
+     */
     private static final class Sync extends AbstractQueuedSynchronizer {
         private static final long serialVersionUID = 4982264981922014374L;
 
         Sync(int count) {
-            setState(count);
+            setState(count); // 设置 AQS state
         }
 
         int getCount() {
             return getState();
         }
 
+        /**
+         * 尝试在共享状态下获取同步状态，该方法在 AQS 中是抽象方法，这里进行了覆写
+         * @param acquires
+         * @return
+         */
         protected int tryAcquireShared(int acquires) {
-            return (getState() == 0) ? 1 : -1;
+            return (getState() == 0) ? 1 : -1;  //如果 state = 0，则返回1，表明可获取同步状态 此时线程调用 await 方法时就不会被阻塞。
         }
 
+        /**
+         * 尝试在共享状态下释放同步状态，该方法在 AQS 中也是抽象方法
+         * @param releases
+         * @return
+         */
         protected boolean tryReleaseShared(int releases) {
             // Decrement count; signal when transition to zero
+            /*
+             * 下面的逻辑是将 state--，state 减至0时，调用 await 等待的线程会被唤醒。
+             * 这里使用循环 + CAS，表明会存在竞争的情况，也就是多个线程可能会同时调用
+             * countDown 方法。在 state 不为0的情况下，线程调用 countDown 是必须要完
+             * 成 state-- 这个操作。所以这里使用了循环 + CAS，确保 countDown 方法可正
+             * 常运行。
+             */
             for (;;) {
-                int c = getState();
+                int c = getState(); // 获取 state
                 if (c == 0)
                     return false;
                 int nextc = c-1;
-                if (compareAndSetState(c, nextc))
+                if (compareAndSetState(c, nextc))   // 使用 CAS 设置新的 state 值
                     return nextc == 0;
             }
         }
     }
 
+    /**
+     * 同步器
+     */
     private final Sync sync;
 
     /**
@@ -195,9 +218,13 @@ public class CountDownLatch {
      *        before threads can pass through {@link #await}
      * @throws IllegalArgumentException if {@code count} is negative
      */
+    /**
+     * CountDownLatch 的构造方法，该方法要求传入大于0的整型数值作为计数器
+     * @param count
+     */
     public CountDownLatch(int count) {
         if (count < 0) throw new IllegalArgumentException("count < 0");
-        this.sync = new Sync(count);
+        this.sync = new Sync(count);    //初始化 Sync
     }
 
     /**
@@ -227,8 +254,12 @@ public class CountDownLatch {
      * @throws InterruptedException if the current thread is interrupted
      *         while waiting
      */
+    /**
+     * 该方法会使线程进入等待状态，直到计数器减至0，或者线程被中断。当计数器为0时，调用
+     * 此方法将会立即返回，不会被阻塞住。
+     */
     public void await() throws InterruptedException {
-        sync.acquireSharedInterruptibly(1);
+        sync.acquireSharedInterruptibly(1); //调用 AQS 中的 acquireSharedInterruptibly 方法
     }
 
     /**
@@ -272,6 +303,13 @@ public class CountDownLatch {
      * @throws InterruptedException if the current thread is interrupted
      *         while waiting
      */
+    /**
+     * 带有超时功能的 await
+     * @param timeout
+     * @param unit
+     * @return
+     * @throws InterruptedException
+     */
     public boolean await(long timeout, TimeUnit unit)
         throws InterruptedException {
         return sync.tryAcquireSharedNanos(1, unit.toNanos(timeout));
@@ -287,8 +325,11 @@ public class CountDownLatch {
      *
      * <p>If the current count equals zero then nothing happens.
      */
+    /**
+     * 此函数将递减锁存器的计数，如果计数到达零，则释放所有等待的线程
+     */
     public void countDown() {
-        sync.releaseShared(1);
+        sync.releaseShared(1);//对countDown的调用转换为对Sync对象的releaseShared（从AQS继承而来）方法的调用
     }
 
     /**
