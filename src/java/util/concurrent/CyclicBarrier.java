@@ -149,6 +149,7 @@ public class CyclicBarrier {
      * but no subsequent reset.
      */
     private static class Generation {
+        // 用于记录屏障有没有被破坏
         boolean broken = false;
     }
 
@@ -157,10 +158,15 @@ public class CyclicBarrier {
     /** Condition to wait on until tripped */
     private final Condition trip = lock.newCondition();
     /** The number of parties */
-    private final int parties;
+    private final int parties;//线程数，即当 parties 个线程到达屏障后，屏障才会放行
     /* The command to run when tripped */
-    private final Runnable barrierCommand;
+    private final Runnable barrierCommand;//回调对象，如果不为 null，会在第 parties 个线程到达屏障后被执行
     /** The current generation */
+    /**
+     * CyclicBarrier 是可循环使用的屏障，这里使用 Generation 记录当前轮次 CyclicBarrier
+     * 的运行状态。当所有线程到达屏障后，generation 将会被更新，表示 CyclicBarrier 进入新一
+     * 轮的运行轮次中。
+     */
     private Generation generation = new Generation();
 
     /**
@@ -168,28 +174,34 @@ public class CyclicBarrier {
      * on each generation.  It is reset to parties on each new
      * generation or when broken.
      */
-    private int count;
+    private int count;//计数器，当 count > 0 时，到达屏障的线程会进入等待状态。当最后一个线程到达屏障后，count 自减至0。最后一个到达的线程会执行回调方法，并唤醒其他处于等待状态中的线程。
 
     /**
      * Updates state on barrier trip and wakes up everyone.
      * Called only while holding lock.
      */
+    /**
+     * 开启新的一轮运行过程
+     */
     private void nextGeneration() {
         // signal completion of last generation
-        trip.signalAll();
+        trip.signalAll();// 唤醒所有处于等待状态中的线程
         // set up next generation
-        count = parties;
-        generation = new Generation();
+        count = parties;// 重置 count
+        generation = new Generation();// 重新创建 Generation，表明进入循环屏障进入新的一轮运行轮次中
     }
 
     /**
      * Sets current barrier generation as broken and wakes up everyone.
      * Called only while holding lock.
      */
+    /**
+     * 破坏屏障
+     */
     private void breakBarrier() {
-        generation.broken = true;
-        count = parties;
-        trip.signalAll();
+        generation.broken = true;// 设置屏障是否被破坏标志
+        count = parties;// 重置 count
+        trip.signalAll();// 唤醒所有处于等待状态中的线程
     }
 
     /**
@@ -199,35 +211,46 @@ public class CyclicBarrier {
         throws InterruptedException, BrokenBarrierException,
                TimeoutException {
         final ReentrantLock lock = this.lock;
+        // 加锁
         lock.lock();
         try {
             final Generation g = generation;
-
+            // 如果 g.broken = true，表明屏障被破坏了，这里直接抛出异常
             if (g.broken)
                 throw new BrokenBarrierException();
 
             if (Thread.interrupted()) {
+                // 如果线程中断，则调用 breakBarrier 破坏屏障
                 breakBarrier();
                 throw new InterruptedException();
             }
 
+            /*
+             * index 表示线程到达屏障的顺序，index = parties - 1 表明当前线程是第一个
+             * 到达屏障的。index = 0，表明当前线程是最有一个到达屏障的。
+             */
             int index = --count;
             if (index == 0) {  // tripped
+                // 当 index = 0 时，唤醒所有处于等待状态的线程
                 boolean ranAction = false;
                 try {
                     final Runnable command = barrierCommand;
+                    // 如果回调对象不为 null，则执行回调
                     if (command != null)
                         command.run();
                     ranAction = true;
+                    // 重置屏障状态，使其进入新一轮的运行过程中
                     nextGeneration();
                     return 0;
                 } finally {
+                    // 若执行回调的过程中发生异常，此时调用 breakBarrier 破坏屏障
                     if (!ranAction)
                         breakBarrier();
                 }
             }
 
             // loop until tripped, broken, interrupted, or timed out
+            //线程运行到此处的线程都会被屏障挡住，并进入等待状态。
             for (;;) {
                 try {
                     if (!timed)
@@ -235,6 +258,10 @@ public class CyclicBarrier {
                     else if (nanos > 0L)
                         nanos = trip.awaitNanos(nanos);
                 } catch (InterruptedException ie) {
+                    /*
+                     * 若下面的条件成立，则表明本轮运行还未结束。此时调用 breakBarrier
+                     * 破坏屏障，唤醒其他线程，并抛出异常
+                     */
                     if (g == generation && ! g.broken) {
                         breakBarrier();
                         throw ie;
@@ -242,16 +269,29 @@ public class CyclicBarrier {
                         // We're about to finish waiting even if we had not
                         // been interrupted, so this interrupt is deemed to
                         // "belong" to subsequent execution.
+                        /*
+                         * 若上面的条件不成立，则有两种可能：
+                         * 1. g != generation
+                         *     此种情况下，表明循环屏障的第 g 轮次的运行已经结束，屏障已经
+                         *     进入了新的一轮运行轮次中。当前线程在稍后返回 到达屏障 的顺序即可
+                         *
+                         * 2. g = generation 但 g.broken = true
+                         *     此种情况下，表明已经有线程执行过 breakBarrier 方法了，当前
+                         *     线程则会在稍后抛出 BrokenBarrierException
+                         */
                         Thread.currentThread().interrupt();
                     }
                 }
 
+                // 屏障被破坏，则抛出 BrokenBarrierException 异常
                 if (g.broken)
                     throw new BrokenBarrierException();
 
+                // 屏障进入新的运行轮次，此时返回线程在上一轮次到达屏障的顺序
                 if (g != generation)
                     return index;
 
+                // 超时判断
                 if (timed && nanos <= 0L) {
                     breakBarrier();
                     throw new TimeoutException();
@@ -274,6 +314,10 @@ public class CyclicBarrier {
      *        tripped, or {@code null} if there is no action
      * @throws IllegalArgumentException if {@code parties} is less than 1
      */
+    /**
+     * 创建一个允许 parties 个线程通行的屏障，若 barrierAction 回调对象不为 null，
+     * 则在最后一个线程到达屏障后，执行相应的回调逻辑
+     */
     public CyclicBarrier(int parties, Runnable barrierAction) {
         if (parties <= 0) throw new IllegalArgumentException();
         this.parties = parties;
@@ -289,6 +333,10 @@ public class CyclicBarrier {
      * @param parties the number of threads that must invoke {@link #await}
      *        before the barrier is tripped
      * @throws IllegalArgumentException if {@code parties} is less than 1
+     */
+    /**
+     * 创建一个允许 parties 个线程通行的屏障
+     * @param parties
      */
     public CyclicBarrier(int parties) {
         this(parties, null);
@@ -462,11 +510,16 @@ public class CyclicBarrier {
      * and choose one to perform the reset.  It may be preferable to
      * instead create a new barrier for subsequent use.
      */
+    /**
+     * reset 方法用于强制重置屏障，使屏障进入新一轮的运行过程中
+     */
     public void reset() {
         final ReentrantLock lock = this.lock;
         lock.lock();
         try {
+            // 破坏屏障
             breakBarrier();   // break the current generation
+            // 开启新一轮的运行过程
             nextGeneration(); // start a new generation
         } finally {
             lock.unlock();
