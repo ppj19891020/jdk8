@@ -159,6 +159,7 @@ public class Semaphore implements java.io.Serializable {
     private final Sync sync;
 
     /**
+     *  AQS 的子类主要定义获取释放 lock
      * Synchronization implementation for semaphore.  Uses AQS state
      * to represent permits. Subclassed into fair and nonfair
      * versions.
@@ -166,24 +167,43 @@ public class Semaphore implements java.io.Serializable {
     abstract static class Sync extends AbstractQueuedSynchronizer {
         private static final long serialVersionUID = 1192457210091910933L;
 
+        /**
+         * 指定许可 初始化 Semaphore
+         * 许可对应aqs中的state
+         * @param permits
+         */
         Sync(int permits) {
             setState(permits);
         }
 
+        /**
+         * 获取许可
+         * @return
+         */
         final int getPermits() {
             return getState();
         }
 
+        /**
+         * 非公平方式获取多个许可
+         * @param acquires
+         * @return
+         */
         final int nonfairTryAcquireShared(int acquires) {
             for (;;) {
                 int available = getState();
-                int remaining = available - acquires;
+                int remaining = available - acquires;// 判断获取 acquires 的剩余 permit 数目
                 if (remaining < 0 ||
-                    compareAndSetState(available, remaining))
+                    compareAndSetState(available, remaining))// cas改变 state
                     return remaining;
             }
         }
 
+        /**
+         * 释放许可
+         * @param releases
+         * @return
+         */
         protected final boolean tryReleaseShared(int releases) {
             for (;;) {
                 int current = getState();
@@ -195,6 +215,10 @@ public class Semaphore implements java.io.Serializable {
             }
         }
 
+        /**
+         * 减少许可
+         * @param reductions
+         */
         final void reducePermits(int reductions) {
             for (;;) {
                 int current = getState();
@@ -206,6 +230,10 @@ public class Semaphore implements java.io.Serializable {
             }
         }
 
+        /**
+         * 将许可设置为0
+         * @return
+         */
         final int drainPermits() {
             for (;;) {
                 int current = getState();
@@ -216,6 +244,7 @@ public class Semaphore implements java.io.Serializable {
     }
 
     /**
+     * 非公平模式
      * NonFair version
      */
     static final class NonfairSync extends Sync {
@@ -226,11 +255,12 @@ public class Semaphore implements java.io.Serializable {
         }
 
         protected int tryAcquireShared(int acquires) {
-            return nonfairTryAcquireShared(acquires);
+            return nonfairTryAcquireShared(acquires);//直接调用父类的方法
         }
     }
 
     /**
+     * 公平模式
      * Fair version
      */
     static final class FairSync extends Sync {
@@ -240,20 +270,26 @@ public class Semaphore implements java.io.Serializable {
             super(permits);
         }
 
+        /**
+         * 公平版本获取 permit 主要看是否由前继节点
+         * @param acquires
+         * @return
+         */
         protected int tryAcquireShared(int acquires) {
             for (;;) {
-                if (hasQueuedPredecessors())
+                if (hasQueuedPredecessors())// 1. 判断是否Sync Queue 里面是否有前继节点
                     return -1;
                 int available = getState();
                 int remaining = available - acquires;
                 if (remaining < 0 ||
-                    compareAndSetState(available, remaining))
+                    compareAndSetState(available, remaining))// 2. cas 改变state
                     return remaining;
             }
         }
     }
 
     /**
+     * 默认使用非公平模式
      * Creates a {@code Semaphore} with the given number of
      * permits and nonfair fairness setting.
      *
@@ -266,6 +302,7 @@ public class Semaphore implements java.io.Serializable {
     }
 
     /**
+     * 需要指定公平或者非公平模式
      * Creates a {@code Semaphore} with the given number of
      * permits and the given fairness setting.
      *
@@ -281,6 +318,7 @@ public class Semaphore implements java.io.Serializable {
     }
 
     /**
+     * 调用 acquireSharedInterruptibly 响应中断的方式获取 permit
      * Acquires a permit from this semaphore, blocking until one is
      * available, or the thread is {@linkplain Thread#interrupt interrupted}.
      *
@@ -313,6 +351,7 @@ public class Semaphore implements java.io.Serializable {
     }
 
     /**
+     * 调用 acquireUninterruptibly 非响应中断的方式获取 permit
      * Acquires a permit from this semaphore, blocking until one is
      * available.
      *
@@ -336,6 +375,7 @@ public class Semaphore implements java.io.Serializable {
     }
 
     /**
+     * 尝试获取 permit,其实就是调用非公平锁的获取许可方法
      * Acquires a permit from this semaphore, only if one is available at the
      * time of invocation.
      *
@@ -364,6 +404,7 @@ public class Semaphore implements java.io.Serializable {
     }
 
     /**
+     * 尝试的获取 permit, 支持超时与中断
      * Acquires a permit from this semaphore, if one becomes available
      * within the given waiting time and the current thread has not
      * been {@linkplain Thread#interrupt interrupted}.
@@ -495,6 +536,7 @@ public class Semaphore implements java.io.Serializable {
     }
 
     /**
+     * 支持中断的获取permit
      * Acquires the given number of permits from this semaphore, only
      * if all are available at the time of invocation.
      *
@@ -527,6 +569,7 @@ public class Semaphore implements java.io.Serializable {
     }
 
     /**
+     * 尝试的获取 permit, 支持超时与中断
      * Acquires the given number of permits from this semaphore, if all
      * become available within the given waiting time and the current
      * thread has not been {@linkplain Thread#interrupt interrupted}.
@@ -583,6 +626,7 @@ public class Semaphore implements java.io.Serializable {
     }
 
     /**
+     * 释放 permit
      * Releases the given number of permits, returning them to the semaphore.
      *
      * <p>Releases the given number of permits, increasing the number of
