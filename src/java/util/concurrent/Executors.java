@@ -34,15 +34,12 @@
  */
 
 package java.util.concurrent;
-import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.security.AccessControlContext;
-import java.security.AccessController;
-import java.security.PrivilegedAction;
-import java.security.PrivilegedExceptionAction;
-import java.security.PrivilegedActionException;
-import java.security.AccessControlException;
 import sun.security.util.SecurityConstants;
+
+import java.security.*;
+import java.util.Collection;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Factory and utility methods for {@link Executor}, {@link
@@ -85,6 +82,11 @@ public class Executors {
      * @return the newly created thread pool
      * @throws IllegalArgumentException if {@code nThreads <= 0}
      */
+    /**
+     * 1、创建一个线程数固定（corePoolSize==maximumPoolSize）的线程池,
+     * 2、核心线程会一直运行
+     * 3、无界队列LinkedBlockingQueue
+     */
     public static ExecutorService newFixedThreadPool(int nThreads) {
         return new ThreadPoolExecutor(nThreads, nThreads,
                                       0L, TimeUnit.MILLISECONDS,
@@ -105,6 +107,11 @@ public class Executors {
      * @return the newly created thread pool
      * @throws IllegalArgumentException if {@code parallelism <= 0}
      * @since 1.8
+     */
+    /**
+     * 用于创建ForkJoin框架中用到的ForkJoinPool线程
+     * @param parallelism 并行数
+     * @return
      */
     public static ExecutorService newWorkStealingPool(int parallelism) {
         return new ForkJoinPool
@@ -167,6 +174,12 @@ public class Executors {
      *
      * @return the newly created single-threaded Executor
      */
+    /**
+     * 1、创建一个线程数固定（corePoolSize==maximumPoolSize==1）的线程池
+     * 2、核心线程会一直运行
+     * 3、无界队列LinkedBlockingQueue
+     * 注意：所有task都是串行执行的
+     */
     public static ExecutorService newSingleThreadExecutor() {
         return new FinalizableDelegatedExecutorService
             (new ThreadPoolExecutor(1, 1,
@@ -212,6 +225,13 @@ public class Executors {
      *
      * @return the newly created thread pool
      */
+    /**
+     * 1、创建一个线程池：当池中的线程都处于忙碌状态时，会立即新建一个线程来处理新来的任务
+     * 2、这种池将会在执行许多耗时短的异步任务的时候提高程序的性能。
+     * 3、6秒钟内没有使用的线程将会被中止，并且从线程池中移除，因此几乎不必担心耗费资源
+     * 4、队列：SynchronousQueue
+     * 5、maximumPoolSize为Integer.MAX_VALUE
+     */
     public static ExecutorService newCachedThreadPool() {
         return new ThreadPoolExecutor(0, Integer.MAX_VALUE,
                                       60L, TimeUnit.SECONDS,
@@ -247,6 +267,9 @@ public class Executors {
      * guaranteed not to be reconfigurable to use additional threads.
      * @return the newly created scheduled executor
      */
+    /**
+     * 创建一个线程池：该线程池可以用于执行延时任务或者定时任务
+     */
     public static ScheduledExecutorService newSingleThreadScheduledExecutor() {
         return new DelegatedScheduledExecutorService
             (new ScheduledThreadPoolExecutor(1));
@@ -267,6 +290,13 @@ public class Executors {
      * threads
      * @return a newly created scheduled executor
      * @throws NullPointerException if threadFactory is null
+     */
+    /**
+     * 创建一个线程池：
+     * corePoolSize==我们指定
+     * maximumPoolSize==Integer.MAX_VALUE
+     * keepAliveTime==0纳秒（即不回收闲置线程）
+     * 队列： DelayedWorkQueue
      */
     public static ScheduledExecutorService newSingleThreadScheduledExecutor(ThreadFactory threadFactory) {
         return new DelegatedScheduledExecutorService
@@ -311,6 +341,11 @@ public class Executors {
      * @return an {@code ExecutorService} instance
      * @throws NullPointerException if executor null
      */
+    /**
+     * 主要用于包装现有的线程池，包装之后的线程池不能修改
+     * @param executor
+     * @return
+     */
     public static ExecutorService unconfigurableExecutorService(ExecutorService executor) {
         if (executor == null)
             throw new NullPointerException();
@@ -326,6 +361,11 @@ public class Executors {
      * @param executor the underlying implementation
      * @return a {@code ScheduledExecutorService} instance
      * @throws NullPointerException if executor null
+     */
+    /**
+     * 用于包装可以周期性执行任务的线程池，包装之后的线程池不能修改
+     * @param executor
+     * @return
      */
     public static ScheduledExecutorService unconfigurableScheduledExecutorService(ScheduledExecutorService executor) {
         if (executor == null)
@@ -348,6 +388,10 @@ public class Executors {
      * number of this factory, and <em>M</em> is the sequence number
      * of the thread created by this factory.
      * @return a thread factory
+     */
+    /**
+     * 默认的工厂方法类
+     * @return
      */
     public static ThreadFactory defaultThreadFactory() {
         return new DefaultThreadFactory();
