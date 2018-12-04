@@ -875,10 +875,12 @@ public class ScheduledThreadPoolExecutor
          * other kinds of tasks or work queues), so are uniquely
          * identified by heapIndex.
          */
-
+        // 队列初始容量
         private static final int INITIAL_CAPACITY = 16;
+        // 根据初始容量创建RunnableScheduledFuture类型的数组
         private RunnableScheduledFuture<?>[] queue =
             new RunnableScheduledFuture<?>[INITIAL_CAPACITY];
+
         private final ReentrantLock lock = new ReentrantLock();
         private int size = 0;
 
@@ -898,12 +900,14 @@ public class ScheduledThreadPoolExecutor
          * signalled.  So waiting threads must be prepared to acquire
          * and lose leadership while waiting.
          */
+        //leader线程
         private Thread leader = null;
 
         /**
          * Condition signalled when a newer task becomes available at the
          * head of the queue or a new thread may need to become leader.
          */
+        //当较新的任务在队列的头部可用时，或者新线程可能需要成为leader，则通过该条件发出信号
         private final Condition available = lock.newCondition();
 
         /**
@@ -920,13 +924,13 @@ public class ScheduledThreadPoolExecutor
          */
         private void siftUp(int k, RunnableScheduledFuture<?> key) {
             while (k > 0) {
-                int parent = (k - 1) >>> 1;
-                RunnableScheduledFuture<?> e = queue[parent];
-                if (key.compareTo(e) >= 0)
+                int parent = (k - 1) >>> 1; //查找到父节点
+                RunnableScheduledFuture<?> e = queue[parent]; //获取父节点任务
+                if (key.compareTo(e) >= 0) //如果父节点先于该任务执行，则跳出循环
                     break;
-                queue[k] = e;
+                queue[k] = e; //与父节点交换位置
                 setIndex(e, k);
-                k = parent;
+                k = parent; //重新向上追溯父节点
             }
             queue[k] = key;
             setIndex(key, k);
@@ -937,20 +941,28 @@ public class ScheduledThreadPoolExecutor
          * Call only when holding lock.
          */
         private void siftDown(int k, RunnableScheduledFuture<?> key) {
+            // 根据二叉树的特性，数组长度除以2，表示取有子节点的索引
             int half = size >>> 1;
+            // 判断索引为k的节点是否有子节点
             while (k < half) {
+                // 左子节点的索引
                 int child = (k << 1) + 1;
                 RunnableScheduledFuture<?> c = queue[child];
+                // 右子节点的索引
                 int right = child + 1;
+                // 如果有右子节点并且左子节点的时间间隔大于右子节点，取时间间隔最小的节点
                 if (right < size && c.compareTo(queue[right]) > 0)
                     c = queue[child = right];
+                // 如果key的时间间隔小于等于c的时间间隔，跳出循环
                 if (key.compareTo(c) <= 0)
                     break;
                 queue[k] = c;
+                // 设置要移除索引的节点为其子节点
                 setIndex(c, k);
                 k = child;
             }
             queue[k] = key;
+            // 将key放入索引为k的位置
             setIndex(key, k);
         }
 
@@ -1008,7 +1020,11 @@ public class ScheduledThreadPoolExecutor
                 RunnableScheduledFuture<?> replacement = queue[s];
                 queue[s] = null;
                 if (s != i) {
+                    // 从i开始向下调整
                     siftDown(i, replacement);
+                    // 如果queue[i] == replacement，说明i是叶子节点
+                    // 如果是这种情况，不能保证子节点的下次执行时间比父节点的大
+                    // 这时需要进行一次向上调整
                     if (queue[i] == replacement)
                         siftUp(i, replacement);
                 }
@@ -1046,6 +1062,11 @@ public class ScheduledThreadPoolExecutor
             }
         }
 
+        /**
+         * 入队操作
+         * @param x
+         * @return
+         */
         public boolean offer(Runnable x) {
             if (x == null)
                 throw new NullPointerException();
@@ -1054,16 +1075,21 @@ public class ScheduledThreadPoolExecutor
             lock.lock();
             try {
                 int i = size;
+                // queue是一个RunnableScheduledFuture类型的数组，如果容量不够需要扩容
                 if (i >= queue.length)
                     grow();
                 size = i + 1;
                 if (i == 0) {
+                    // i == 0 说明堆中还没有数据，设置索引
                     queue[0] = e;
                     setIndex(e, 0);
                 } else {
+                    // i != 0 时，需要对堆进行重新排序
                     siftUp(i, e);
                 }
+                // 如果传入的任务已经是队列的第一个节点了，这时available需要发出信号
                 if (queue[0] == e) {
+                    // leader设置为null为了使在take方法中的线程在通过available.signal();后会执行available.awaitNanos(delay);
                     leader = null;
                     available.signal();
                 }
@@ -1092,9 +1118,12 @@ public class ScheduledThreadPoolExecutor
          * @param f the task to remove and return
          */
         private RunnableScheduledFuture<?> finishPoll(RunnableScheduledFuture<?> f) {
+            // 数组长度-1
             int s = --size;
+            // 取出最后一个节点
             RunnableScheduledFuture<?> x = queue[s];
             queue[s] = null;
+            // 长度不为0，则从第一个元素开始排序，目的是要把最后一个节点放到合适的位置上
             if (s != 0)
                 siftDown(0, x);
             setIndex(f, -1);
@@ -1124,18 +1153,23 @@ public class ScheduledThreadPoolExecutor
                     if (first == null)
                         available.await();
                     else {
+                        // 计算当前时间到执行时间的时间间隔
                         long delay = first.getDelay(NANOSECONDS);
                         if (delay <= 0)
                             return finishPoll(first);
                         first = null; // don't retain ref while waiting
                         if (leader != null)
+                            // leader不为空，阻塞线程
                             available.await();
                         else {
+                            // leader为空，则把leader设置为当前线程
                             Thread thisThread = Thread.currentThread();
                             leader = thisThread;
                             try {
+                                // 阻塞到执行时间
                                 available.awaitNanos(delay);
                             } finally {
+                                // 设置leader = null，让其他线程执行available.awaitNanos(delay);
                                 if (leader == thisThread)
                                     leader = null;
                             }
@@ -1143,6 +1177,8 @@ public class ScheduledThreadPoolExecutor
                     }
                 }
             } finally {
+                // 如果leader不为空，则说明leader的线程正在执行available.awaitNanos(delay);
+                // 如果queue[0] == null，说明队列为空
                 if (leader == null && queue[0] != null)
                     available.signal();
                 lock.unlock();
@@ -1164,18 +1200,25 @@ public class ScheduledThreadPoolExecutor
                             nanos = available.awaitNanos(nanos);
                     } else {
                         long delay = first.getDelay(NANOSECONDS);
+                        // 如果delay <= 0，说明已经到了任务执行的时间，返回
                         if (delay <= 0)
                             return finishPoll(first);
+                        // 如果nanos <= 0，说明已经超时，返回null
                         if (nanos <= 0)
                             return null;
                         first = null; // don't retain ref while waiting
+                        // nanos < delay 说明需要等待的时间小于任务要执行的延迟时间
+                        // leader != null 说明有其它线程正在对任务进行阻塞
+                        // 这时阻塞当前线程nanos纳秒
                         if (nanos < delay || leader != null)
                             nanos = available.awaitNanos(nanos);
                         else {
                             Thread thisThread = Thread.currentThread();
                             leader = thisThread;
                             try {
+                                // 这里的timeLeft表示delay减去实际的等待时间
                                 long timeLeft = available.awaitNanos(delay);
+                                // 计算剩余的等待时间
                                 nanos -= delay - timeLeft;
                             } finally {
                                 if (leader == thisThread)
