@@ -36,6 +36,7 @@
 package java.util.concurrent;
 
 /**
+ * 作为 Runnable 的 Future。成功执行 run 方法可以完成 Future 并允许访问其结果。
  * A {@link Future} that is {@link Runnable}. Successful execution of
  * the {@code run} method causes completion of the {@code Future}
  * and allows access to its results.

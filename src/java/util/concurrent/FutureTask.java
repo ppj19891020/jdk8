@@ -74,6 +74,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
      */
 
     /**
+     * 任务状态
      * The run state of this task, initially NEW.  The run state
      * transitions to a terminal state only in methods set,
      * setException, and cancel.  During completion, state may take on
@@ -90,27 +91,31 @@ public class FutureTask<V> implements RunnableFuture<V> {
      * NEW -> INTERRUPTING -> INTERRUPTED
      */
     private volatile int state;
-    private static final int NEW          = 0;
-    private static final int COMPLETING   = 1;
-    private static final int NORMAL       = 2;
-    private static final int EXCEPTIONAL  = 3;
-    private static final int CANCELLED    = 4;
-    private static final int INTERRUPTING = 5;
-    private static final int INTERRUPTED  = 6;
+    private static final int NEW          = 0;//任务执行阶段，结果赋值前
+    private static final int COMPLETING   = 1;//结果赋值阶段
+    private static final int NORMAL       = 2;//任务执行完毕
+    private static final int EXCEPTIONAL  = 3;//任务执行时发生异常
+    private static final int CANCELLED    = 4;//任务被取消
+    private static final int INTERRUPTING = 5;//设置中断变量阶段
+    private static final int INTERRUPTED  = 6;//任务中断
 
     /** The underlying callable; nulled out after running */
     private Callable<V> callable;
+    //任务返回值，正常返回时是泛型指定对象，任务异常时是Throwable对象，它在state=COMPLETING阶段完成赋值操作
     /** The result to return or exception to throw from get() */
     private Object outcome; // non-volatile, protected by state reads/writes
+    //当前执行任务线程，run()方法开始时进行判断和赋值，保证同一时刻只有一个线程执行FutureTask，并且FutureTask.run()只能执行一次。
     /** The thread running the callable; CASed during run() */
     private volatile Thread runner;
+    //阻塞队列头节点，每个节点存储调用FutureTask.get()方法，且采用LockSupport.park()阻塞的线程。在任务对outcome完成赋值后，调用finishCompletion()唤醒所有阻塞线程。
     /** Treiber stack of waiting threads */
     private volatile WaitNode waiters;
 
     /**
-     * Returns result or throws exception for completed task.
-     *
-     * @param s completed state value
+     * 功能：返回任务结果
+     * 描述： 由于在set(),setException() 方法中设置了otcome的值，
+     * 	 可能是throwable对象，也可能是正常返回结果，所以需要
+     * 	 对outcome进行一次处理
      */
     @SuppressWarnings("unchecked")
     private V report(int s) throws ExecutionException {
@@ -123,6 +128,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
     }
 
     /**
+     * FutureTask.run()中调用callable.call()
      * Creates a {@code FutureTask} that will, upon running, execute the
      * given {@code Callable}.
      *
@@ -137,6 +143,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
     }
 
     /**
+     * 调用Executors.callable(runnable, result)，返回new RunnableAdapter(task, result)
      * Creates a {@code FutureTask} that will, upon running, execute the
      * given {@code Runnable}, and arrange that {@code get} will return the
      * given result on successful completion.
@@ -153,15 +160,29 @@ public class FutureTask<V> implements RunnableFuture<V> {
         this.state = NEW;       // ensure visibility of callable
     }
 
+    /**
+     * 其实就是指线程中断中和中断状态
+     * @return
+     */
     public boolean isCancelled() {
         return state >= CANCELLED;
     }
 
+    /**
+     * 因为NEW表示任务执行阶段，因此判断任务是否完成
+     * @return
+     */
     public boolean isDone() {
         return state != NEW;
     }
 
+    /**
+     * 如果任务在NEW阶段，mayInterruptIfRunning == true，且能CAS能修改state值，中断当前线程，调用finishCompletion()
+     * @param mayInterruptIfRunning
+     * @return
+     */
     public boolean cancel(boolean mayInterruptIfRunning) {
+        //判断当前任务状态是否为NEW，并且cas操作能否成功修改state值，如果不能，返回false
         if (!(state == NEW &&
               UNSAFE.compareAndSwapInt(this, stateOffset, NEW,
                   mayInterruptIfRunning ? INTERRUPTING : CANCELLED)))
@@ -173,16 +194,20 @@ public class FutureTask<V> implements RunnableFuture<V> {
                     if (t != null)
                         t.interrupt();
                 } finally { // final state
+                    // 修改state为INTERRUPTED状态
                     UNSAFE.putOrderedInt(this, stateOffset, INTERRUPTED);
                 }
             }
         } finally {
+            //唤醒所有调用get方法等待线程队列
             finishCompletion();
         }
         return true;
     }
 
     /**
+     * 如果任务正在执行或者正在赋值，调用awaitDone()方法，阻塞当前线程，且封装成WaitNode，放入等待队列中
+     * 否则，调用report()，将outcome包装成返回参数类型。
      * @throws CancellationException {@inheritDoc}
      */
     public V get() throws InterruptedException, ExecutionException {
@@ -218,6 +243,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
     protected void done() { }
 
     /**
+     * 设置返回结果
      * Sets the result of this future to the given value unless
      * this future has already been set or has been cancelled.
      *
@@ -252,6 +278,11 @@ public class FutureTask<V> implements RunnableFuture<V> {
         }
     }
 
+    /**
+     * 判断：状态是否为NEW，并CAS成功将runner线程赋值为当前线程
+     * 线程调用run(),进行判断，运行callable.call()，再调用set()将结果设置到outcome。
+     * 失败调用setException()，将Throwable对象设置到outcome。
+     */
     public void run() {
         if (state != NEW ||
             !UNSAFE.compareAndSwapObject(this, runnerOffset,
@@ -347,6 +378,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
     }
 
     /**
+     * 将等待线程封装成节点，形成等待队列
      * Simple linked list nodes to record waiting threads in a Treiber
      * stack.  See other classes such as Phaser and SynchronousQueue
      * for more detailed explanation.
@@ -358,6 +390,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
     }
 
     /**
+     * 通过waiters参数，唤醒等待队列，所有因为调用get()方法而阻塞的线程 LockSupport.unpark():线程取消阻塞
      * Removes and signals all waiting threads, invokes done(), and
      * nulls out callable.
      */
@@ -387,11 +420,32 @@ public class FutureTask<V> implements RunnableFuture<V> {
     }
 
     /**
-     * Awaits completion or aborts on interrupt or timeout.
+     * 功能：制定线程等待结果的具体实行策略
      *
-     * @param timed true if use timed waits
-     * @param nanos time to wait, if timed
-     * @return state upon completion
+     * 逻辑
+     * for中判断当前线程是否被中断，如果是抛出异常
+     *
+     * 一、如果state == NEW（运行状态）
+     * 		将当前线程包装成WaitNode，并CAS放入队列头部。（期间如果状态改变，可能其中某些步骤未进行）
+     * 		如果timed == true，计算超时时间，已经超过设置时间，移除队列节点，返回
+     * 		未超过设置时间，阻塞线程到设置时间
+     * 		这几个操作是层级关系，如果一直保持state == NEW，将进行：
+     * 								创建WaitNode
+     * 								CAS放入队列头部
+     * 								超时移除节点并返回
+     * 								未超时调用parkNanos()阻塞线程
+     * 二、如果state == COMPLETING（赋值阶段）
+     * 		当前线程yield(),等待状态更新
+     *
+     * 三、如果state > COMPLETING
+     * 		将等待队列中该线程节点的thread参数设置为null
+     *
+     * System.nanoTime :返回的可能是任意时间，甚至为负，相对于System.concurrentTime更加精确。
+     * 					用于记录一个时间段。
+     *
+     * 返回结果：state
+     * 		state <= COMPLETING,表示获取结果失败，可能是超时，可能是执行错误
+     * 		state > COMPLETING，表示获取结果成功
      */
     private int awaitDone(boolean timed, long nanos)
         throws InterruptedException {
@@ -400,6 +454,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
         boolean queued = false;
         for (;;) {
             if (Thread.interrupted()) {
+                //判断当前线程是否被中断,中断将移除等待队列中的
                 removeWaiter(q);
                 throw new InterruptedException();
             }
@@ -415,6 +470,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
             else if (q == null)
                 q = new WaitNode();
             else if (!queued)
+                //在队列头部添加q，并将q赋值给waiters
                 queued = UNSAFE.compareAndSwapObject(this, waitersOffset,
                                                      q.next = waiters, q);
             else if (timed) {
@@ -423,6 +479,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
                     removeWaiter(q);
                     return state;
                 }
+                //将线程阻塞，设置阻塞时间为nanos
                 LockSupport.parkNanos(this, nanos);
             }
             else
@@ -463,13 +520,19 @@ public class FutureTask<V> implements RunnableFuture<V> {
         }
     }
 
+    //UNSAFE类提供高效并且线程安全方式操作变量，直接和内存数据打交道，
+    // 但是分配的内存需要手动释放。由于UNSAFE类只提供给JVM信任的启动类加载器所使用，这里采用反射获取UNSAFE对象。
     // Unsafe mechanics
     private static final sun.misc.Unsafe UNSAFE;
+    //state参数在内存中对象的偏移量
     private static final long stateOffset;
+    //runner参数在内存中对象的偏移量
     private static final long runnerOffset;
+    //waiter参数在内存中对象的偏移量
     private static final long waitersOffset;
     static {
         try {
+            //通过反射的方式来访问Unsafe类中的theUnsafe静态成员变量，该theUnsafe静态成员变量在Unsafe第一次使用时就已经初始化。
             UNSAFE = sun.misc.Unsafe.getUnsafe();
             Class<?> k = FutureTask.class;
             stateOffset = UNSAFE.objectFieldOffset

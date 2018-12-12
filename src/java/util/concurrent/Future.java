@@ -96,73 +96,47 @@ package java.util.concurrent;
 public interface Future<V> {
 
     /**
-     * Attempts to cancel execution of this task.  This attempt will
-     * fail if the task has already completed, has already been cancelled,
-     * or could not be cancelled for some other reason. If successful,
-     * and this task has not started when {@code cancel} is called,
-     * this task should never run.  If the task has already started,
-     * then the {@code mayInterruptIfRunning} parameter determines
-     * whether the thread executing this task should be interrupted in
-     * an attempt to stop the task.
-     *
-     * <p>After this method returns, subsequent calls to {@link #isDone} will
-     * always return {@code true}.  Subsequent calls to {@link #isCancelled}
-     * will always return {@code true} if this method returned {@code true}.
-     *
-     * @param mayInterruptIfRunning {@code true} if the thread executing this
-     * task should be interrupted; otherwise, in-progress tasks are allowed
-     * to complete
-     * @return {@code false} if the task could not be cancelled,
-     * typically because it has already completed normally;
-     * {@code true} otherwise
+     * cancel方法用来取消任务，如果取消任务成功则返回true，如果取消任务失败则返回false。
+     * 参数mayInterruptIfRunning表示是否允许取消正在执行却没有执行完毕的任务，
+     * 如果设置true，则表示可以取消正在执行过程中的任务。
+     * 如果任务已经完成，则无论mayInterruptIfRunning为true还是false，此方法肯定返回false，
+     * 即如果取消已经完成的任务会返回false；如果任务正在执行，若mayInterruptIfRunning设置为true，
+     * 则返回true，若mayInterruptIfRunning设置为false，则返回false；
+     * 如果任务还没有执行，则无论mayInterruptIfRunning为true还是false，肯定返回true。
+     * @param mayInterruptIfRunning
+     * @return
      */
     boolean cancel(boolean mayInterruptIfRunning);
 
     /**
-     * Returns {@code true} if this task was cancelled before it completed
-     * normally.
-     *
-     * @return {@code true} if this task was cancelled before it completed
+     * 表示任务是否被取消成功，如果在任务正常完成前被取消成功，则返回 true。
+     * @return
      */
     boolean isCancelled();
 
     /**
-     * Returns {@code true} if this task completed.
-     *
-     * Completion may be due to normal termination, an exception, or
-     * cancellation -- in all of these cases, this method will return
-     * {@code true}.
-     *
-     * @return {@code true} if this task completed
+     * 表示任务是否已经完成，若任务完成，则返回true；
+     * @return
      */
     boolean isDone();
 
     /**
-     * Waits if necessary for the computation to complete, and then
-     * retrieves its result.
-     *
-     * @return the computed result
-     * @throws CancellationException if the computation was cancelled
-     * @throws ExecutionException if the computation threw an
-     * exception
-     * @throws InterruptedException if the current thread was interrupted
-     * while waiting
+     * 用来获取执行结果，这个方法会产生阻塞，会一直等到任务执行完毕才返回；
+     * @return
+     * @throws InterruptedException
+     * @throws ExecutionException
      */
     V get() throws InterruptedException, ExecutionException;
 
     /**
-     * Waits if necessary for at most the given time for the computation
-     * to complete, and then retrieves its result, if available.
+     * 用来获取执行结果，如果在指定时间内，还没获取到结果，就直接返回null。
      *
-     * @param timeout the maximum time to wait
-     * @param unit the time unit of the timeout argument
-     * @return the computed result
-     * @throws CancellationException if the computation was cancelled
-     * @throws ExecutionException if the computation threw an
-     * exception
-     * @throws InterruptedException if the current thread was interrupted
-     * while waiting
-     * @throws TimeoutException if the wait timed out
+     * @param timeout
+     * @param unit
+     * @return
+     * @throws InterruptedException
+     * @throws ExecutionException
+     * @throws TimeoutException
      */
     V get(long timeout, TimeUnit unit)
         throws InterruptedException, ExecutionException, TimeoutException;
